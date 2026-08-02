@@ -10,6 +10,7 @@ import SwiftUI
 // This app exports the lidar distance from the camera. Each pixel in the lidar (TIFF) result is a 32 bit value in meters.
 struct ContentView: View {
     @StateObject private var session = LiDARDistanceSession()
+    @StateObject private var levelMonitor = UprightLevelMonitor()
     @State private var isCapturing = false
     @State private var bannerMessage: String?
     @State private var shareItems: [Any] = []
@@ -21,15 +22,22 @@ struct ContentView: View {
                 cameraStack
 
                 VStack(spacing: 0) {
-                    if let bannerMessage {
-                        Text(bannerMessage)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.black.opacity(0.55), in: Capsule())
-                            .padding(.top, 12)
+                    HStack(alignment: .top) {
+                        if let bannerMessage {
+                            Text(bannerMessage)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.black.opacity(0.55), in: Capsule())
+                        }
+
+                        Spacer(minLength: 0)
+
+                        uprightIndicator
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
 
                     Spacer()
 
@@ -69,8 +77,14 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { session.start() }
-        .onDisappear { session.stop() }
+        .onAppear {
+            session.start()
+            levelMonitor.start()
+        }
+        .onDisappear {
+            session.stop()
+            levelMonitor.stop()
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             session.syncViewMetrics()
         }
@@ -116,6 +130,55 @@ struct ContentView: View {
         }
         .disabled(isCapturing || session.overlayImage == nil)
         .accessibilityLabel("Capture photo and depth TIFF")
+    }
+
+    private var uprightIndicator: some View {
+        let isGreen = levelMonitor.isUpright
+        let ringColor = isGreen ? Color.green : Color.white.opacity(0.85)
+        let fillColor = isGreen ? Color.green : Color.orange
+        let size: CGFloat = 54
+        let bubbleTravel = size * 0.28
+
+        return VStack(spacing: 4) {
+            ZStack {
+                Circle()
+                    .strokeBorder(ringColor, lineWidth: isGreen ? 3 : 2)
+                    .frame(width: size, height: size)
+
+                // Crosshairs for a repeatable level target.
+                Rectangle()
+                    .fill(ringColor.opacity(0.55))
+                    .frame(width: size - 12, height: 1)
+                Rectangle()
+                    .fill(ringColor.opacity(0.55))
+                    .frame(width: 1, height: size - 12)
+
+                Circle()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 10, height: 10)
+
+                Circle()
+                    .fill(fillColor)
+                    .frame(width: 12, height: 12)
+                    .offset(
+                        x: levelMonitor.bubbleOffset.x * bubbleTravel,
+                        y: levelMonitor.bubbleOffset.y * bubbleTravel
+                    )
+                    .shadow(color: fillColor.opacity(0.7), radius: isGreen ? 4 : 0)
+            }
+            .animation(.easeOut(duration: 0.08), value: levelMonitor.bubbleOffset)
+            .animation(.easeOut(duration: 0.12), value: isGreen)
+
+            Text(isGreen ? "Level" : String(format: "%.2f°", levelMonitor.tiltDegrees))
+                .font(.caption2.monospacedDigit().weight(.semibold))
+                .foregroundStyle(isGreen ? .green : .white)
+                .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
+        }
+        .accessibilityLabel(
+            isGreen
+                ? "Phone is perfectly upright"
+                : String(format: "Phone tilt %.2f degrees", levelMonitor.tiltDegrees)
+        )
     }
 
     private func rangeSlider(
