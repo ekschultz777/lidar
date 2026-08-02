@@ -23,14 +23,30 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
     @Published private(set) var overlayImage: UIImage?
     @Published private(set) var status: Status = .starting
 
-    /// Farthest distance included in the label grid, in meters.
+    /// Closest distance included in the label grid / TIFF, in meters.
+    @Published var minRangeMeters: Float = 0.25
+
+    /// Farthest distance included in the label grid / TIFF, in meters.
     @Published var maxRangeMeters: Float = 2.0
+
+    func setMinRange(_ value: Float) {
+        minRangeMeters = min(max(value, 0.05), maxRangeMeters - 0.05)
+    }
+
+    func setMaxRange(_ value: Float) {
+        maxRangeMeters = max(min(value, 5.0), minRangeMeters + 0.05)
+    }
 
     let arView = ARView(frame: .zero)
 
     private var isRenderingOverlay = false
     private var frameCounter = 0
     private let renderQueue = DispatchQueue(label: "com.TedSchultz.lidar.grid", qos: .userInitiated)
+
+    /// Latest depth frame kept for TIFF export.
+    private var latestDepthMap: CVPixelBuffer?
+    private var latestDisplayTransform: CGAffineTransform = .identity
+    private var latestCaptureViewportSize: CGSize = .zero
 
     /// Updated from the AR callback so we can map depth → screen without hopping threads first.
     nonisolated(unsafe) private var latestViewportSize: CGSize = .zero
@@ -75,33 +91,69 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
 
     enum CaptureError: LocalizedError {
         case snapshotFailed
-        case composeFailed
+        case noDepth
+        case tiffFailed
 
         var errorDescription: String? {
             switch self {
             case .snapshotFailed:
                 return "Couldn't capture the camera image."
-            case .composeFailed:
-                return "Couldn't compose the distance overlay image."
+            case .noDepth:
+                return "No LiDAR depth available to export."
+            case .tiffFailed:
+                return "Couldn't create the depth TIFF file."
             }
         }
     }
 
-    struct CapturePair {
-        let plain: UIImage
-        let annotated: UIImage
+    struct CaptureExport {
+        let photo: UIImage
+        let depthTIFFURL: URL
     }
 
-    /// Captures a clean camera frame and a second frame with distance numbers.
-    func captureImages() async throws -> CapturePair {
+    /// Captures a clean camera frame and a Float32 depth TIFF (meters; 0 outside Near/Far).
+    func captureExport() async throws -> CaptureExport {
         let camera = try await snapshotCamera()
-        guard let annotated = CaptureComposer.compose(
-            camera: camera,
-            overlay: overlayImage
-        ) else {
-            throw CaptureError.composeFailed
+        guard let depthMap = latestDepthMap else { throw CaptureError.noDepth }
+
+        // Match the live view framing used for displayTransform (preserves aspect ratio).
+        let outputSize = latestCaptureViewportSize.width > 1
+            ? latestCaptureViewportSize
+            : camera.size
+        let transform = latestDisplayTransform
+        let minMeters = minRangeMeters
+        let maxMeters = maxRangeMeters
+
+        let filename = "depth_\(Self.timestampString()).tiff"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            nonisolated(unsafe) let depthBuffer = depthMap
+            renderQueue.async {
+                do {
+                    try DepthTIFFExporter.write(
+                        depthMap: depthBuffer,
+                        minMeters: minMeters,
+                        maxMeters: maxMeters,
+                        outputSize: outputSize,
+                        displayTransform: transform,
+                        to: url
+                    )
+                    // Also keep a copy in Documents for Files app access.
+                    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+                    if let documents {
+                        let docsURL = documents.appendingPathComponent(filename)
+                        try? FileManager.default.removeItem(at: docsURL)
+                        try? FileManager.default.copyItem(at: url, to: docsURL)
+                    }
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        return CapturePair(plain: camera, annotated: annotated)
+
+        return CaptureExport(photo: camera, depthTIFFURL: url)
     }
 
     private func snapshotCamera() async throws -> UIImage {
@@ -116,12 +168,23 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         }
     }
 
+    private static func timestampString() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return formatter.string(from: Date())
+    }
+
     fileprivate func handleDepthFrame(
         _ depthMap: CVPixelBuffer,
         displayTransform: CGAffineTransform,
         viewportSize: CGSize
     ) {
         status = .tracking
+        latestDepthMap = depthMap
+        latestDisplayTransform = displayTransform
+        latestCaptureViewportSize = viewportSize
+
         frameCounter += 1
         guard !isRenderingOverlay, frameCounter % 2 == 0 else { return }
         guard viewportSize.width > 1, viewportSize.height > 1 else { return }
@@ -130,13 +193,15 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         nonisolated(unsafe) let depthBuffer = depthMap
         let transform = displayTransform
         let size = viewportSize
+        let minMeters = minRangeMeters
         let maxMeters = maxRangeMeters
 
         renderQueue.async { [weak self] in
-            let image = DistanceGridRenderer.makeImage(
+            let image = DepthRangeOverlayRenderer.makeImage(
                 from: depthBuffer,
                 viewportSize: size,
                 displayTransform: transform,
+                minMeters: minMeters,
                 maxMeters: maxMeters
             )
 

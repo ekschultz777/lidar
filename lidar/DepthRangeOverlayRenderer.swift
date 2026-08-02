@@ -1,0 +1,112 @@
+//
+//  DepthRangeOverlayRenderer.swift
+//  lidar
+//
+//  Created by Ted Schultz on 7/30/26.
+//
+
+import CoreGraphics
+import CoreVideo
+import UIKit
+
+enum DepthRangeOverlayRenderer {
+    /// Renders a view-aligned overlay of in-range depth pixels (same mask as the TIFF).
+    /// Outside Near/Far is transparent; inside is a translucent false-color of distance.
+    static func makeImage(
+        from depthMap: CVPixelBuffer,
+        viewportSize: CGSize,
+        displayTransform: CGAffineTransform,
+        minMeters: Float,
+        maxMeters: Float
+    ) -> UIImage? {
+        let depthWidth = CVPixelBufferGetWidth(depthMap)
+        let depthHeight = CVPixelBufferGetHeight(depthMap)
+        guard depthWidth > 0, depthHeight > 0 else { return nil }
+        guard viewportSize.width > 1, viewportSize.height > 1 else { return nil }
+
+        let minD = min(minMeters, maxMeters - 0.01)
+        let maxD = max(maxMeters, minD + 0.01)
+        let range = maxD - minD
+        let inverseTransform = displayTransform.inverted()
+
+        // Keep overlay responsive while staying close to full-screen coverage.
+        let maxDimension: CGFloat = 480
+        let scale = min(1, maxDimension / max(viewportSize.width, viewportSize.height))
+        let outWidth = max(1, Int((viewportSize.width * scale).rounded()))
+        let outHeight = max(1, Int((viewportSize.height * scale).rounded()))
+
+        var pixels = [UInt8](repeating: 0, count: outWidth * outHeight * 4)
+
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
+
+        for y in 0..<outHeight {
+            let viewY = (CGFloat(y) + 0.5) / CGFloat(outHeight)
+            for x in 0..<outWidth {
+                let viewX = (CGFloat(x) + 0.5) / CGFloat(outWidth)
+                let imagePoint = CGPoint(x: viewX, y: viewY).applying(inverseTransform)
+                let index = (y * outWidth + x) * 4
+
+                guard imagePoint.x >= 0, imagePoint.x <= 1,
+                      imagePoint.y >= 0, imagePoint.y <= 1 else {
+                    continue
+                }
+
+                let depthX = min(max(Int((imagePoint.x * CGFloat(depthWidth)).rounded()), 0), depthWidth - 1)
+                let depthY = min(max(Int((imagePoint.y * CGFloat(depthHeight)).rounded()), 0), depthHeight - 1)
+                let row = baseAddress.advanced(by: depthY * bytesPerRow)
+                    .assumingMemoryBound(to: Float32.self)
+                let depth = row[depthX]
+
+                guard depth.isFinite, depth >= minD, depth <= maxD else {
+                    continue
+                }
+
+                let t = (depth - minD) / range
+                let color = color(forNormalizedDistance: t)
+                let alpha: Float = 0.55
+                pixels[index] = UInt8((Float(color.r) * alpha).rounded())
+                pixels[index + 1] = UInt8((Float(color.g) * alpha).rounded())
+                pixels[index + 2] = UInt8((Float(color.b) * alpha).rounded())
+                pixels[index + 3] = UInt8((alpha * 255).rounded())
+            }
+        }
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
+
+        guard let context = CGContext(
+            data: &pixels,
+            width: outWidth,
+            height: outHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: outWidth * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ),
+        let cgImage = context.makeImage() else {
+            return nil
+        }
+
+        return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+    }
+
+    /// Near → far within the selected window: red → yellow → green → cyan → blue
+    private static func color(forNormalizedDistance t: Float) -> (r: UInt8, g: UInt8, b: UInt8) {
+        let clamped = max(0, min(t, 1))
+        let hue = CGFloat(clamped * 0.7)
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        UIColor(hue: hue, saturation: 1, brightness: 1, alpha: 1)
+            .getRed(&r, green: &g, blue: &b, alpha: nil)
+        return (
+            UInt8((r * 255).rounded()),
+            UInt8((g * 255).rounded()),
+            UInt8((b * 255).rounded())
+        )
+    }
+}

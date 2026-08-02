@@ -7,10 +7,13 @@
 
 import SwiftUI
 
+// This app exports the lidar distance from the camera. Each pixel in the lidar (TIFF) result is a 32 bit value in meters.
 struct ContentView: View {
     @StateObject private var session = LiDARDistanceSession()
     @State private var isCapturing = false
     @State private var bannerMessage: String?
+    @State private var shareItems: [Any] = []
+    @State private var showShareSheet = false
 
     var body: some View {
         ZStack {
@@ -37,9 +40,29 @@ struct ContentView: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 8)
 
-                    farSlider
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 10)
+                    VStack(spacing: 10) {
+                        rangeSlider(
+                            title: "Near",
+                            valueText: DistanceFormatting.millimeters(session.minRangeMeters),
+                            value: Binding(
+                                get: { Double(session.minRangeMeters) },
+                                set: { session.setMinRange(Float($0)) }
+                            ),
+                            range: 0.05...4.9
+                        )
+
+                        rangeSlider(
+                            title: "Far",
+                            valueText: DistanceFormatting.millimeters(session.maxRangeMeters),
+                            value: Binding(
+                                get: { Double(session.maxRangeMeters) },
+                                set: { session.setMaxRange(Float($0)) }
+                            ),
+                            range: 0.1...5.0
+                        )
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
                 }
             } else {
                 unsupportedView
@@ -50,6 +73,9 @@ struct ContentView: View {
         .onDisappear { session.stop() }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             session.syncViewMetrics()
+        }
+        .sheet(isPresented: $showShareSheet) {
+            ShareSheet(items: shareItems)
         }
     }
 
@@ -89,31 +115,30 @@ struct ContentView: View {
             .background(.ultraThinMaterial, in: Circle())
         }
         .disabled(isCapturing || session.overlayImage == nil)
-        .accessibilityLabel("Capture distance overlay")
+        .accessibilityLabel("Capture photo and depth TIFF")
     }
 
-    private var farSlider: some View {
+    private func rangeSlider(
+        title: String,
+        valueText: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>
+    ) -> some View {
         VStack(spacing: 4) {
             HStack {
-                Text("Far")
+                Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
                 Spacer()
-                Text(DistanceFormatting.millimeters(session.maxRangeMeters))
+                Text(valueText)
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
             }
 
-            Slider(
-                value: Binding(
-                    get: { Double(session.maxRangeMeters) },
-                    set: { session.maxRangeMeters = Float($0) }
-                ),
-                in: 0.2...5.0
-            )
-            .tint(.white)
+            Slider(value: value, in: range)
+                .tint(.white)
         }
     }
 
@@ -139,9 +164,11 @@ struct ContentView: View {
         defer { isCapturing = false }
 
         do {
-            let pair = try await session.captureImages()
-            try await PhotoLibrarySaver.save([pair.plain, pair.annotated])
-            showBanner("Saved 2 photos (plain + numbers)")
+            let export = try await session.captureExport()
+            try await PhotoLibrarySaver.save(export.photo)
+            shareItems = [export.depthTIFFURL]
+            showShareSheet = true
+            showBanner("Photo saved · share/save the depth TIFF")
         } catch {
             showBanner(error.localizedDescription)
         }
@@ -150,7 +177,7 @@ struct ContentView: View {
     private func showBanner(_ message: String) {
         withAnimation(.snappy) { bannerMessage = message }
         Task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(2.5))
             await MainActor.run {
                 withAnimation(.snappy) {
                     if bannerMessage == message {
