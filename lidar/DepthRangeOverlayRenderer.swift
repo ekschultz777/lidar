@@ -11,21 +11,19 @@ import UIKit
 
 enum DepthRangeOverlayRenderer {
     /// Renders a view-aligned overlay of in-range depth pixels (same mask as the TIFF).
-    /// Outside Near/Far is transparent; inside is a translucent false-color of distance.
+    /// Outside the fixed depth range is transparent; inside is a translucent false-color of distance.
     static func makeImage(
         from depthMap: CVPixelBuffer,
         viewportSize: CGSize,
-        displayTransform: CGAffineTransform,
-        minMeters: Float,
-        maxMeters: Float
+        displayTransform: CGAffineTransform
     ) -> UIImage? {
         let depthWidth = CVPixelBufferGetWidth(depthMap)
         let depthHeight = CVPixelBufferGetHeight(depthMap)
         guard depthWidth > 0, depthHeight > 0 else { return nil }
         guard viewportSize.width > 1, viewportSize.height > 1 else { return nil }
 
-        let minD = min(minMeters, maxMeters - 0.01)
-        let maxD = max(maxMeters, minD + 0.01)
+        let minD = DepthRange.minMeters
+        let maxD = DepthRange.maxMeters
         let range = maxD - minD
         let inverseTransform = displayTransform.inverted()
 

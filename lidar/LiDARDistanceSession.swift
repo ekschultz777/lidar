@@ -23,26 +23,6 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
     @Published private(set) var overlayImage: UIImage?
     @Published private(set) var status: Status = .starting
 
-    /// Closest distance included in the label grid / TIFF, in meters.
-    @Published var minRangeMeters: Float = 0.25
-
-    /// Farthest distance included in the label grid / TIFF, in meters.
-    @Published var maxRangeMeters: Float = 2.0
-
-    /// Mirrored for the AR callback (nonisolated) without hopping to the main actor.
-    nonisolated(unsafe) private var cachedMinRangeMeters: Float = 0.25
-    nonisolated(unsafe) private var cachedMaxRangeMeters: Float = 2.0
-
-    func setMinRange(_ value: Float) {
-        minRangeMeters = min(max(value, 0.05), maxRangeMeters - 0.05)
-        cachedMinRangeMeters = minRangeMeters
-    }
-
-    func setMaxRange(_ value: Float) {
-        maxRangeMeters = max(min(value, 5.0), minRangeMeters + 0.05)
-        cachedMaxRangeMeters = maxRangeMeters
-    }
-
     let arView = ARView(frame: .zero)
 
     /// Process depth / overlay on a subset of AR frames to cut CPU/heat.
@@ -157,7 +137,7 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         return export
     }
 
-    /// Captures a clean camera frame and a Float32 depth TIFF (meters; 0 outside Near/Far).
+    /// Captures a clean camera frame and a Float32 depth TIFF (meters; 0 outside range / invalid).
     func captureExport() async throws -> CaptureExport {
         syncViewMetrics()
         let capturedAt = Date()
@@ -178,8 +158,6 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         let outputSize = outputSizeCandidate.width > 1
             ? outputSizeCandidate
             : (latestViewportSize.width > 1 ? latestViewportSize : camera.size)
-        let minMeters = minRangeMeters
-        let maxMeters = maxRangeMeters
 
         let basename = Self.timestampString(from: capturedAt)
         let photoURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(basename).jpg")
@@ -196,8 +174,6 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
 
                     try DepthTIFFExporter.write(
                         depthMap: depthBuffer,
-                        minMeters: minMeters,
-                        maxMeters: maxMeters,
                         outputSize: outputSize,
                         displayTransform: transform,
                         to: tiffURL
@@ -257,8 +233,6 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         guard viewportSize.width > 1, viewportSize.height > 1 else { return }
 
         isRenderingOverlayFlag = true
-        let minMeters = cachedMinRangeMeters
-        let maxMeters = cachedMaxRangeMeters
         nonisolated(unsafe) let depthBuffer = depthMap
         let transform = displayTransform
         let size = viewportSize
@@ -267,9 +241,7 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
             let image = DepthRangeOverlayRenderer.makeImage(
                 from: depthBuffer,
                 viewportSize: size,
-                displayTransform: transform,
-                minMeters: minMeters,
-                maxMeters: maxMeters
+                displayTransform: transform
             )
 
             Task { @MainActor in

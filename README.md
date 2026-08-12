@@ -6,10 +6,10 @@ Requires a device with a LiDAR scanner (for example iPhone 16 Pro). Built with A
 
 ## What it does
 
-- Live camera preview with a false-color overlay of depths inside an adjustable **Near / Far** window (about 5 cm–5 m).
+- Live camera preview with a false-color overlay of depths from **0–1 m**.
 - **Capture** (shutter button or remote HTTP) saves:
   - a photo to the Photos library (camera roll)
-  - a **Float32 TIFF** where each pixel is distance from the camera plane in **meters** (values outside Near/Far, and invalid samples, are `0`)
+  - a **Float32 TIFF** where each pixel is distance from the camera plane in **meters** (values outside 0–1 m, and invalid samples, are `0`)
 - While the app is open, a Bonjour HTTP server on port **8080** lets a Mac on the same Wi‑Fi trigger a capture and download a ZIP of the JPEG + TIFF.
 - A **level bubble** in the corner shows how close the phone is to perfectly upright (portrait, plumb). It turns green only when tilt is essentially zero.
 
@@ -23,10 +23,10 @@ In practice, for Pro / Pro Max class devices:
 
 | Aspect | Expectation |
 | --- | --- |
-| Useful range | Roughly **0.25–5 m**; this app’s Near/Far controls span about **0.05–5.0 m** |
+| Useful range | Hardware is often usable to ~5 m; this app keeps **0–1 m** |
 | Typical accuracy | Often **~1 cm or better** at close / mid range on matte surfaces; independent tests of iPhone LiDAR often report on the order of **~5 mm RMSE** in favorable conditions |
-| Best results | Steady hold, diffuse surfaces, good lighting for the fused RGB+depth map, distances well inside the Far limit |
-| Weaker results | Very reflective, transparent, or light-absorbing surfaces; edges and thin structures; longer ranges toward 5 m |
+| Best results | Steady hold, diffuse surfaces, good lighting for the fused RGB+depth map, subjects inside 1 m |
+| Weaker results | Very reflective, transparent, or light-absorbing surfaces; edges and thin structures |
 
 Apple also exposes a per-pixel confidence map for scene depth; this app currently exports the depth values themselves and does not filter by confidence. Treat the TIFF as a dense distance field for the framed view, not as a survey instrument.
 
@@ -48,7 +48,7 @@ That angular threshold is much tighter than casual bubble levels; it is meant fo
 1. Open `lidar.xcodeproj` in Xcode.
 2. Select a LiDAR-capable physical device.
 3. Build & Run and allow camera, Photos, and **Local Network** access.
-4. Set Near / Far for the scene, wait for the level to go green if you need a plumb capture, then tap the shutter (or use remote capture below).
+4. Wait for the level to go green if you need a plumb capture, then tap the shutter (or use remote capture below).
 5. Keep the app in the foreground while using remote capture. The bottom of the UI shows a ready-to-copy `curl` example.
 
 ## Remote capture (Bonjour + curl)

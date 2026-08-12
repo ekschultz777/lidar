@@ -47,36 +47,14 @@ struct ContentView: View {
                     .padding(.horizontal, 20)
                     .padding(.bottom, 8)
 
-                    VStack(spacing: 10) {
-                        rangeSlider(
-                            title: "Near",
-                            valueText: DistanceFormatting.millimeters(session.minRangeMeters),
-                            value: Binding(
-                                get: { Double(session.minRangeMeters) },
-                                set: { session.setMinRange(Float($0)) }
-                            ),
-                            range: 0.05...4.9
-                        )
-
-                        rangeSlider(
-                            title: "Far",
-                            valueText: DistanceFormatting.millimeters(session.maxRangeMeters),
-                            value: Binding(
-                                get: { Double(session.maxRangeMeters) },
-                                set: { session.setMaxRange(Float($0)) }
-                            ),
-                            range: 0.1...5.0
-                        )
-
-                        Text(httpServer.statusText)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.white.opacity(0.75))
-                            .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 10)
+                    Text(httpServer.statusText)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.white.opacity(0.75))
+                        .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 10)
                 }
             } else {
                 unsupportedView
@@ -185,30 +163,6 @@ struct ContentView: View {
                 ? "Phone is perfectly upright"
                 : String(format: "Phone tilt %.2f degrees", levelMonitor.tiltDegrees)
         )
-    }
-
-    private func rangeSlider(
-        title: String,
-        valueText: String,
-        value: Binding<Double>,
-        range: ClosedRange<Double>
-    ) -> some View {
-        VStack(spacing: 4) {
-            HStack {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
-                Spacer()
-                Text(valueText)
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
-            }
-
-            Slider(value: value, in: range)
-                .tint(.white)
-        }
     }
 
     private var unsupportedView: some View {

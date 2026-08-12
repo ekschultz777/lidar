@@ -27,11 +27,9 @@ enum DepthTIFFExporter {
     }
 
     /// Writes a Float32 grayscale TIFF where each pixel is distance in meters.
-    /// Values outside `[minMeters, maxMeters]`, and invalid samples, are 0.
+    /// Values outside the fixed depth range, and invalid samples, are 0.
     static func write(
         depthMap: CVPixelBuffer,
-        minMeters: Float,
-        maxMeters: Float,
         outputSize: CGSize,
         displayTransform: CGAffineTransform,
         to url: URL
@@ -47,8 +45,8 @@ enum DepthTIFFExporter {
         let outWidth = max(1, Int((outputSize.width * scale).rounded()))
         let outHeight = max(1, Int((outputSize.height * scale).rounded()))
 
-        let minD = min(minMeters, maxMeters - 0.01)
-        let maxD = max(maxMeters, minD + 0.01)
+        let minD = DepthRange.minMeters
+        let maxD = DepthRange.maxMeters
         let inverseTransform = displayTransform.inverted()
 
         var pixels = [Float](repeating: 0, count: outWidth * outHeight)
