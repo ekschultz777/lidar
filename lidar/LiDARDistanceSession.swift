@@ -113,6 +113,7 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
 
     /// Captures a clean camera frame and a Float32 depth TIFF (meters; 0 outside Near/Far).
     func captureExport() async throws -> CaptureExport {
+        let capturedAt = Date()
         let camera = try await snapshotCamera()
         guard let depthMap = latestDepthMap else { throw CaptureError.noDepth }
 
@@ -124,7 +125,7 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         let minMeters = minRangeMeters
         let maxMeters = maxRangeMeters
 
-        let filename = "depth_\(Self.timestampString()).tiff"
+        let filename = "\(Self.timestampString(from: capturedAt)).tiff"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -139,13 +140,6 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
                         displayTransform: transform,
                         to: url
                     )
-                    // Also keep a copy in Documents for Files app access.
-                    let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-                    if let documents {
-                        let docsURL = documents.appendingPathComponent(filename)
-                        try? FileManager.default.removeItem(at: docsURL)
-                        try? FileManager.default.copyItem(at: url, to: docsURL)
-                    }
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
@@ -168,11 +162,13 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         }
     }
 
-    private static func timestampString() -> String {
+    /// Filename-safe capture time, including milliseconds for uniqueness.
+    private static func timestampString(from date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd_HHmmss"
-        return formatter.string(from: Date())
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss.SSS"
+        return formatter.string(from: date)
     }
 
     fileprivate func handleDepthFrame(

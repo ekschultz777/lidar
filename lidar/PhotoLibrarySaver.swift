@@ -18,17 +18,13 @@ enum PhotoLibrarySaver {
             case .permissionDenied:
                 return "Photo library access is required to save captures."
             case .saveFailed:
-                return "Couldn't save the image to Photos."
+                return "Couldn't save to the camera roll."
             }
         }
     }
 
-    static func save(_ image: UIImage) async throws {
-        try await save([image])
-    }
-
-    static func save(_ images: [UIImage]) async throws {
-        guard !images.isEmpty else { return }
+    static func save(images: [UIImage] = [], fileURLs: [URL] = []) async throws {
+        guard !images.isEmpty || !fileURLs.isEmpty else { return }
 
         let status = await requestAddPermission()
         guard status == .authorized || status == .limited else {
@@ -39,6 +35,10 @@ enum PhotoLibrarySaver {
             PHPhotoLibrary.shared().performChanges({
                 for image in images {
                     PHAssetChangeRequest.creationRequestForAsset(from: image)
+                }
+                for url in fileURLs {
+                    let request = PHAssetCreationRequest.forAsset()
+                    request.addResource(with: .photo, fileURL: url, options: nil)
                 }
             }, completionHandler: { success, error in
                 if success {

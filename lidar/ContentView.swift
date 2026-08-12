@@ -13,8 +13,6 @@ struct ContentView: View {
     @StateObject private var levelMonitor = UprightLevelMonitor()
     @State private var isCapturing = false
     @State private var bannerMessage: String?
-    @State private var shareItems: [Any] = []
-    @State private var showShareSheet = false
 
     var body: some View {
         ZStack {
@@ -87,9 +85,6 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
             session.syncViewMetrics()
-        }
-        .sheet(isPresented: $showShareSheet) {
-            ShareSheet(items: shareItems)
         }
     }
 
@@ -228,10 +223,15 @@ struct ContentView: View {
 
         do {
             let export = try await session.captureExport()
-            try await PhotoLibrarySaver.save(export.photo)
-            shareItems = [export.depthTIFFURL]
-            showShareSheet = true
-            showBanner("Photo saved · share/save the depth TIFF")
+            // Always land the camera frame in Photos. Depth TIFF is best-effort —
+            // Photos often rejects Float32 scientific TIFFs.
+            try await PhotoLibrarySaver.save(images: [export.photo])
+            do {
+                try await PhotoLibrarySaver.save(fileURLs: [export.depthTIFFURL])
+                showBanner("Saved photo + depth TIFF to camera roll")
+            } catch {
+                showBanner("Saved photo to camera roll")
+            }
         } catch {
             showBanner(error.localizedDescription)
         }
