@@ -15,9 +15,11 @@ struct ARViewContainer: UIViewRepresentable {
         let view = session.arView
         view.cameraMode = .ar
         view.automaticallyConfigureSession = false
+        // Safe extras we never use — avoid options that can interfere with the camera feed.
         view.renderOptions.insert(.disablePersonOcclusion)
         view.renderOptions.insert(.disableDepthOfField)
         view.renderOptions.insert(.disableMotionBlur)
+        view.renderOptions.insert(.disableGroundingShadows)
         return view
     }
 

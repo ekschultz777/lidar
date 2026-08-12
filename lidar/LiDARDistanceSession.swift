@@ -29,28 +29,38 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
     /// Farthest distance included in the label grid / TIFF, in meters.
     @Published var maxRangeMeters: Float = 2.0
 
+    /// Mirrored for the AR callback (nonisolated) without hopping to the main actor.
+    nonisolated(unsafe) private var cachedMinRangeMeters: Float = 0.25
+    nonisolated(unsafe) private var cachedMaxRangeMeters: Float = 2.0
+
     func setMinRange(_ value: Float) {
         minRangeMeters = min(max(value, 0.05), maxRangeMeters - 0.05)
+        cachedMinRangeMeters = minRangeMeters
     }
 
     func setMaxRange(_ value: Float) {
         maxRangeMeters = max(min(value, 5.0), minRangeMeters + 0.05)
+        cachedMaxRangeMeters = maxRangeMeters
     }
 
     let arView = ARView(frame: .zero)
 
-    private var isRenderingOverlay = false
-    private var frameCounter = 0
+    /// Process depth / overlay on a subset of AR frames to cut CPU/heat.
+    private static let overlayFrameStride = 3
     private let renderQueue = DispatchQueue(label: "com.TedSchultz.lidar.grid", qos: .userInitiated)
+    private let depthLock = NSLock()
 
-    /// Latest depth frame kept for TIFF export.
-    private var latestDepthMap: CVPixelBuffer?
-    private var latestDisplayTransform: CGAffineTransform = .identity
-    private var latestCaptureViewportSize: CGSize = .zero
+    /// Latest depth frame kept for TIFF export (guarded by `depthLock`).
+    nonisolated(unsafe) private var latestDepthMap: CVPixelBuffer?
+    nonisolated(unsafe) private var latestDisplayTransform: CGAffineTransform = .identity
+    nonisolated(unsafe) private var latestCaptureViewportSize: CGSize = .zero
 
     /// Updated from the AR callback so we can map depth → screen without hopping threads first.
     nonisolated(unsafe) private var latestViewportSize: CGSize = .zero
     nonisolated(unsafe) private var latestInterfaceOrientation: UIInterfaceOrientation = .portrait
+    nonisolated(unsafe) private var isRenderingOverlayFlag = false
+    nonisolated(unsafe) private var rawFrameCounter = 0
+    nonisolated(unsafe) private var noDepthEventPending = false
 
     var supportsLiDAR: Bool {
         ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -64,10 +74,9 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
 
         let configuration = ARWorldTrackingConfiguration()
         configuration.frameSemantics = [.sceneDepth]
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            configuration.sceneReconstruction = .mesh
-        }
-        configuration.environmentTexturing = .automatic
+        // Unused ARKit features — large heat/CPU cost. Keep the default video format;
+        // forcing another format can break sceneDepth on some devices.
+        configuration.environmentTexturing = .none
 
         arView.session.delegate = self
         arView.session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
@@ -150,18 +159,25 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
 
     /// Captures a clean camera frame and a Float32 depth TIFF (meters; 0 outside Near/Far).
     func captureExport() async throws -> CaptureExport {
+        syncViewMetrics()
         let capturedAt = Date()
         let camera = try await snapshotCamera()
-        guard let depthMap = latestDepthMap else { throw CaptureError.noDepth }
+
+        depthLock.lock()
+        let depthMap = latestDepthMap
+        let outputSizeCandidate = latestCaptureViewportSize
+        let transform = latestDisplayTransform
+        depthLock.unlock()
+
+        guard let depthMap else { throw CaptureError.noDepth }
         guard let jpegData = camera.jpegData(compressionQuality: 0.95) else {
             throw CaptureError.photoWriteFailed
         }
 
         // Match the live view framing used for displayTransform (preserves aspect ratio).
-        let outputSize = latestCaptureViewportSize.width > 1
-            ? latestCaptureViewportSize
-            : camera.size
-        let transform = latestDisplayTransform
+        let outputSize = outputSizeCandidate.width > 1
+            ? outputSizeCandidate
+            : (latestViewportSize.width > 1 ? latestViewportSize : camera.size)
         let minMeters = minRangeMeters
         let maxMeters = maxRangeMeters
 
@@ -227,21 +243,25 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         displayTransform: CGAffineTransform,
         viewportSize: CGSize
     ) {
-        status = .tracking
+        depthLock.lock()
         latestDepthMap = depthMap
         latestDisplayTransform = displayTransform
         latestCaptureViewportSize = viewportSize
+        depthLock.unlock()
 
-        frameCounter += 1
-        guard !isRenderingOverlay, frameCounter % 2 == 0 else { return }
+        if status != .tracking {
+            status = .tracking
+        }
+
+        guard !isRenderingOverlayFlag else { return }
         guard viewportSize.width > 1, viewportSize.height > 1 else { return }
 
-        isRenderingOverlay = true
+        isRenderingOverlayFlag = true
+        let minMeters = cachedMinRangeMeters
+        let maxMeters = cachedMaxRangeMeters
         nonisolated(unsafe) let depthBuffer = depthMap
         let transform = displayTransform
         let size = viewportSize
-        let minMeters = minRangeMeters
-        let maxMeters = maxRangeMeters
 
         renderQueue.async { [weak self] in
             let image = DepthRangeOverlayRenderer.makeImage(
@@ -255,13 +275,16 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.overlayImage = image
-                self.isRenderingOverlay = false
+                self.isRenderingOverlayFlag = false
             }
         }
     }
 
     fileprivate func markNoDepth() {
-        status = .noDepth
+        noDepthEventPending = false
+        if status != .noDepth {
+            status = .noDepth
+        }
     }
 
     nonisolated static func copyDepthBuffer(_ source: CVPixelBuffer) -> CVPixelBuffer? {
@@ -307,11 +330,18 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
 extension LiDARDistanceSession: ARSessionDelegate {
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard let depthMap = frame.sceneDepth?.depthMap else {
-            Task { @MainActor in
-                self.markNoDepth()
+            if !noDepthEventPending {
+                noDepthEventPending = true
+                Task { @MainActor in
+                    self.markNoDepth()
+                }
             }
             return
         }
+        noDepthEventPending = false
+
+        rawFrameCounter += 1
+        guard rawFrameCounter % Self.overlayFrameStride == 0 else { return }
 
         guard let copied = Self.copyDepthBuffer(depthMap) else { return }
 
@@ -325,12 +355,13 @@ extension LiDARDistanceSession: ARSessionDelegate {
         }
 
         Task { @MainActor in
+            // Bounds / orientation can be zero until the ARView is laid out.
             self.syncViewMetrics()
-            self.handleDepthFrame(
-                copied,
-                displayTransform: displayTransform,
-                viewportSize: viewportSize.width > 1 ? viewportSize : self.arView.bounds.size
-            )
+            let size = self.latestViewportSize.width > 1
+                ? self.latestViewportSize
+                : self.arView.bounds.size
+            // `frame` is only valid during this callback — use the transform computed above.
+            self.handleDepthFrame(copied, displayTransform: displayTransform, viewportSize: size)
         }
     }
 }

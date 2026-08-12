@@ -25,11 +25,12 @@ final class UprightLevelMonitor: ObservableObject {
     private let holdDuration: TimeInterval = 0.25
 
     private let motionManager = CMMotionManager()
-    private let updateInterval = 1.0 / 100.0
+    /// 20 Hz is plenty for a level bubble and avoids thrashing SwiftUI.
+    private let updateInterval = 1.0 / 20.0
 
     /// Low-pass filtered gravity for a stable plumb reading.
     private var filteredGravity: SIMD3<Double>?
-    private let filterAlpha = 0.08
+    private let filterAlpha = 0.18
     private var uprightSince: Date?
 
     func start() {
@@ -79,9 +80,6 @@ final class UprightLevelMonitor: ObservableObject {
             max(-1, min(1, gz * scale))
         )
 
-        tiltDegrees = tilt
-        bubbleOffset = offset
-
         let withinTolerance =
             tilt <= greenThresholdDegrees
             && rollDegrees <= greenThresholdDegrees
@@ -89,18 +87,30 @@ final class UprightLevelMonitor: ObservableObject {
             && gy < -0.999
 
         let now = Date()
+        let nextUpright: Bool
         if withinTolerance {
             if uprightSince == nil {
                 uprightSince = now
             }
             if let start = uprightSince, now.timeIntervalSince(start) >= holdDuration {
-                isUpright = true
+                nextUpright = true
             } else {
-                isUpright = false
+                nextUpright = false
             }
         } else {
             uprightSince = nil
-            isUpright = false
+            nextUpright = false
+        }
+
+        // Skip @Published writes that wouldn't change the UI.
+        if abs(tilt - tiltDegrees) >= 0.01 {
+            tiltDegrees = tilt
+        }
+        if abs(offset.x - bubbleOffset.x) >= 0.01 || abs(offset.y - bubbleOffset.y) >= 0.01 {
+            bubbleOffset = offset
+        }
+        if nextUpright != isUpright {
+            isUpright = nextUpright
         }
     }
 }

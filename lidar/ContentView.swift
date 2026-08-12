@@ -173,7 +173,6 @@ struct ContentView: View {
                     )
                     .shadow(color: fillColor.opacity(0.7), radius: isGreen ? 4 : 0)
             }
-            .animation(.easeOut(duration: 0.08), value: levelMonitor.bubbleOffset)
             .animation(.easeOut(duration: 0.12), value: isGreen)
 
             Text(isGreen ? "Level" : String(format: "%.2f°", levelMonitor.tiltDegrees))
