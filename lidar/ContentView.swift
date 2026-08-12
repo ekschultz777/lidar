@@ -11,6 +11,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var session = LiDARDistanceSession()
     @StateObject private var levelMonitor = UprightLevelMonitor()
+    @StateObject private var httpServer = CaptureHTTPServer()
     @State private var isCapturing = false
     @State private var bannerMessage: String?
 
@@ -66,6 +67,13 @@ struct ContentView: View {
                             ),
                             range: 0.1...5.0
                         )
+
+                        Text(httpServer.statusText)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.white.opacity(0.75))
+                            .shadow(color: .black.opacity(0.7), radius: 1.5, y: 1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 10)
@@ -78,8 +86,12 @@ struct ContentView: View {
         .onAppear {
             session.start()
             levelMonitor.start()
+            if session.supportsLiDAR {
+                httpServer.start(session: session)
+            }
         }
         .onDisappear {
+            httpServer.stop()
             session.stop()
             levelMonitor.stop()
         }
@@ -222,16 +234,8 @@ struct ContentView: View {
         defer { isCapturing = false }
 
         do {
-            let export = try await session.captureExport()
-            // Always land the camera frame in Photos. Depth TIFF is best-effort —
-            // Photos often rejects Float32 scientific TIFFs.
-            try await PhotoLibrarySaver.save(images: [export.photo])
-            do {
-                try await PhotoLibrarySaver.save(fileURLs: [export.depthTIFFURL])
-                showBanner("Saved photo + depth TIFF to camera roll")
-            } catch {
-                showBanner("Saved photo to camera roll")
-            }
+            _ = try await session.captureAndPersist()
+            showBanner("Saved to camera roll")
         } catch {
             showBanner(error.localizedDescription)
         }

@@ -7,10 +7,10 @@ Requires a device with a LiDAR scanner (for example iPhone 16 Pro). Built with A
 ## What it does
 
 - Live camera preview with a false-color overlay of depths inside an adjustable **Near / Far** window (about 5 cm–5 m).
-- **Capture** saves:
-  - a photo to the Photos library
+- **Capture** (shutter button or remote HTTP) saves:
+  - a photo to the Photos library (camera roll)
   - a **Float32 TIFF** where each pixel is distance from the camera plane in **meters** (values outside Near/Far, and invalid samples, are `0`)
-- Copies of the TIFF are also written under the app Documents folder for Files access.
+- While the app is open, a Bonjour HTTP server on port **8080** lets a Mac on the same Wi‑Fi trigger a capture and download a ZIP of the JPEG + TIFF.
 - A **level bubble** in the corner shows how close the phone is to perfectly upright (portrait, plumb). It turns green only when tilt is essentially zero.
 
 ## Measurement accuracy
@@ -47,12 +47,60 @@ That angular threshold is much tighter than casual bubble levels; it is meant fo
 
 1. Open `lidar.xcodeproj` in Xcode.
 2. Select a LiDAR-capable physical device.
-3. Build & Run and allow camera access.
-4. Set Near / Far for the scene, wait for the level to go green if you need a plumb capture, then tap the shutter.
+3. Build & Run and allow camera, Photos, and **Local Network** access.
+4. Set Near / Far for the scene, wait for the level to go green if you need a plumb capture, then tap the shutter (or use remote capture below).
+5. Keep the app in the foreground while using remote capture. The bottom of the UI shows a ready-to-copy `curl` example.
+
+## Remote capture (Bonjour + curl)
+
+The phone advertises an `_http._tcp` Bonjour service named after the device (Settings → General → About → **Name**). Hostname for curl is that name with spaces turned into hyphens, plus `.local`, on port **8080**.
+
+### Helper script (recommended)
+
+From a Mac on the same Wi‑Fi, with the lidar app open:
+
+```bash
+./scripts/find-lidar-phone.sh
+```
+
+It browses Bonjour, checks `/health` so only real lidar phones are offered, lets you pick one if there are several, then prints ready-to-run `curl` commands.
+
+### Find the phone manually
+
+Browse for the service:
+
+```bash
+dns-sd -B _http._tcp local.
+```
+
+Leave it running until you see an entry whose instance name matches your iPhone. Then resolve hostname and port (use the exact name from the browse output; quote it if it has spaces):
+
+```bash
+dns-sd -L "Your iPhone Name" _http._tcp local.
+```
+
+You can also read the name on the phone and form `Your-iPhone-Name.local` yourself (spaces → `-`).
+
+### Capture and download
+
+With the lidar app open and tracking:
+
+```bash
+curl http://Your-iPhone-Name.local:8080/capture -o capture.zip
+```
+
+That triggers a capture on the phone (also saved to the camera roll) and downloads a ZIP containing a timestamped `.jpg` and `.tiff`.
+
+Health check:
+
+```bash
+curl http://Your-iPhone-Name.local:8080/health
+```
 
 ## Main pieces
 
 - `LiDARDistanceSession.swift` — ARKit session, scene depth, capture
+- `CaptureHTTPServer.swift` — Bonjour HTTP server (`GET /capture` → ZIP)
 - `DepthTIFFExporter.swift` — Float32 meters TIFF export
 - `DepthRangeOverlayRenderer.swift` — live in-range false-color overlay
 - `UprightLevelMonitor.swift` — Core Motion plumb / level indicator

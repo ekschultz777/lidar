@@ -29,9 +29,22 @@
 		D5E2DC7B301BE0C8008B1F29 /* lidarUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = lidarUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D5E2DC9A301BE0C8008B1F29 /* Exceptions for "lidar" folder in "lidar" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D5E2DC5E301BE0C4008B1F29 /* lidar */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D5E2DC61301BE0C4008B1F29 /* lidar */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D5E2DC9A301BE0C8008B1F29 /* Exceptions for "lidar" folder in "lidar" target */,
+			);
 			path = lidar;
 			sourceTree = "<group>";
 		};
@@ -400,6 +413,7 @@
 				DEVELOPMENT_TEAM = 2P43R8TU72;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = lidar/Info.plist;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera and LiDAR scanner to measure the distance to objects.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "This app saves camera captures to your photo library.";
@@ -437,6 +451,7 @@
 				DEVELOPMENT_TEAM = 2P43R8TU72;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = lidar/Info.plist;
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "This app uses the camera and LiDAR scanner to measure the distance to objects.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "This app saves camera captures to your photo library.";

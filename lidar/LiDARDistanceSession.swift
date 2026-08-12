@@ -89,10 +89,12 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         }
     }
 
-    enum CaptureError: LocalizedError {
+    enum CaptureError: LocalizedError, Equatable {
         case snapshotFailed
         case noDepth
+        case photoWriteFailed
         case tiffFailed
+        case busy
 
         var errorDescription: String? {
             switch self {
@@ -100,15 +102,50 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
                 return "Couldn't capture the camera image."
             case .noDepth:
                 return "No LiDAR depth available to export."
+            case .photoWriteFailed:
+                return "Couldn't encode the camera image."
             case .tiffFailed:
                 return "Couldn't create the depth TIFF file."
+            case .busy:
+                return "A capture is already in progress."
             }
         }
     }
 
     struct CaptureExport {
+        let basename: String
         let photo: UIImage
+        let photoURL: URL
         let depthTIFFURL: URL
+    }
+
+    private var isCaptureInFlight = false
+
+    /// Captures, saves to the camera roll, and builds a ZIP of JPEG + depth TIFF.
+    func capturePersistAndZip() async throws -> CaptureZipResult {
+        let export = try await captureAndPersist()
+        let jpegData = try Data(contentsOf: export.photoURL)
+        let tiffData = try Data(contentsOf: export.depthTIFFURL)
+        let zipData = ZipWriter.makeArchive(entries: [
+            .init(filename: "\(export.basename).jpg", data: jpegData),
+            .init(filename: "\(export.basename).tiff", data: tiffData),
+        ])
+        return CaptureZipResult(
+            zipData: zipData,
+            zipFilename: "\(export.basename).zip"
+        )
+    }
+
+    /// Captures and saves to the camera roll (photo required; TIFF best-effort).
+    func captureAndPersist() async throws -> CaptureExport {
+        guard !isCaptureInFlight else { throw CaptureError.busy }
+        isCaptureInFlight = true
+        defer { isCaptureInFlight = false }
+
+        let export = try await captureExport()
+        try await PhotoLibrarySaver.save(images: [export.photo])
+        try? await PhotoLibrarySaver.save(fileURLs: [export.depthTIFFURL])
+        return export
     }
 
     /// Captures a clean camera frame and a Float32 depth TIFF (meters; 0 outside Near/Far).
@@ -116,6 +153,9 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         let capturedAt = Date()
         let camera = try await snapshotCamera()
         guard let depthMap = latestDepthMap else { throw CaptureError.noDepth }
+        guard let jpegData = camera.jpegData(compressionQuality: 0.95) else {
+            throw CaptureError.photoWriteFailed
+        }
 
         // Match the live view framing used for displayTransform (preserves aspect ratio).
         let outputSize = latestCaptureViewportSize.width > 1
@@ -125,20 +165,26 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
         let minMeters = minRangeMeters
         let maxMeters = maxRangeMeters
 
-        let filename = "\(Self.timestampString(from: capturedAt)).tiff"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        let basename = Self.timestampString(from: capturedAt)
+        let photoURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(basename).jpg")
+        let tiffURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(basename).tiff")
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             nonisolated(unsafe) let depthBuffer = depthMap
             renderQueue.async {
                 do {
+                    if FileManager.default.fileExists(atPath: photoURL.path) {
+                        try FileManager.default.removeItem(at: photoURL)
+                    }
+                    try jpegData.write(to: photoURL, options: .atomic)
+
                     try DepthTIFFExporter.write(
                         depthMap: depthBuffer,
                         minMeters: minMeters,
                         maxMeters: maxMeters,
                         outputSize: outputSize,
                         displayTransform: transform,
-                        to: url
+                        to: tiffURL
                     )
                     continuation.resume()
                 } catch {
@@ -147,7 +193,12 @@ final class LiDARDistanceSession: NSObject, ObservableObject {
             }
         }
 
-        return CaptureExport(photo: camera, depthTIFFURL: url)
+        return CaptureExport(
+            basename: basename,
+            photo: camera,
+            photoURL: photoURL,
+            depthTIFFURL: tiffURL
+        )
     }
 
     private func snapshotCamera() async throws -> UIImage {
